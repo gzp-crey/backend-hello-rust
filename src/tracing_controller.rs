@@ -24,6 +24,12 @@ pub enum Telemetry {
 
     /// Enbale Zipkin telemetry (https://zipkin.io/)
     Zipkin,
+
+    /// Appinsight telemetry
+    AppInsight {
+        //endpoint: String,
+        instrumentation_key: String,
+    },
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -48,7 +54,7 @@ where
     }
 }
 
-//#[tracing::instrument]
+#[tracing::instrument(skip(state))]
 async fn configure_log(Extension(state): Extension<Arc<State>>, format: String) -> Result<(), String> {
     log::trace!("format={}", format);
     if let Some(reload_handle) = &state.reload_handle {
@@ -85,7 +91,7 @@ impl Service {
     where
         L: for<'a> LookupSpan<'a> + Subscriber + WithSubscriber + Send + Sync,
     {
-        match config.telemetry {
+        match &config.telemetry {
             Telemetry::Jaeger => {
                 let tracer = opentelemetry_jaeger::new_agent_pipeline()
                     .with_service_name(SERVICE_NAME)
@@ -99,6 +105,20 @@ impl Service {
                 let tracer = opentelemetry_zipkin::new_pipeline()
                     .with_service_name(SERVICE_NAME)
                     .install_batch(opentelemetry::runtime::Tokio)?;
+                let telemetry = tracing_opentelemetry::layer()
+                    .with_tracked_inactivity(true)
+                    .with_tracer(tracer);
+                self.finalize_logger(config, log.with(telemetry))
+            }
+
+            Telemetry::AppInsight {
+                /*endpoint,*/ instrumentation_key,
+            } => {
+                let tracer = opentelemetry_application_insights::new_pipeline(instrumentation_key.clone())
+                    //.with_endpoint(endpoint).unwrap()
+                    .with_service_name(SERVICE_NAME)
+                    .with_client(reqwest::Client::new())
+                    .install_batch(opentelemetry::runtime::Tokio);
                 let telemetry = tracing_opentelemetry::layer()
                     .with_tracked_inactivity(true)
                     .with_tracer(tracer);
