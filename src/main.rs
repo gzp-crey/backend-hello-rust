@@ -7,11 +7,8 @@ use tokio::{
     runtime::{Handle as RtHandle, Runtime},
     signal,
 };
-use tower_http::{
-    cors::CorsLayer,
-    trace::{DefaultMakeSpan, DefaultOnRequest, DefaultOnResponse, TraceLayer},
-};
-use tracing::{log, Dispatch, Level};
+use tower_http::{cors::CorsLayer};
+use tracing::{log, Dispatch};
 
 mod config;
 mod hello_controller;
@@ -59,10 +56,7 @@ async fn async_main(rt_handle: RtHandle) -> Result<(), AnyError> {
     log::error!("error - ok");
 
     let cors = CorsLayer::permissive();
-    let tracing_layer = TraceLayer::new_for_http()
-        .make_span_with(DefaultMakeSpan::new().level(Level::ERROR))
-        .on_request(DefaultOnRequest::new().level(Level::INFO))
-        .on_response(DefaultOnResponse::new().level(Level::INFO));
+    let tracing_layer = axum_tracing_opentelemetry::opentelemetry_tracing_layer();
 
     let hello_service = hello_controller::service(&config).await?;
 
@@ -76,7 +70,7 @@ async fn async_main(rt_handle: RtHandle) -> Result<(), AnyError> {
     log::warn!("Starting service on {}", addr);
 
     axum::Server::bind(&addr)
-        .serve(app.into_make_service())
+        .serve(app.into_make_service_with_connect_info::<SocketAddr>())
         .with_graceful_shutdown(shutdown_signal())
         .await
         .map_err(|e| anyhow!(e))?;

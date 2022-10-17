@@ -10,11 +10,11 @@
         "allow_reconfigure": "true",
 
         "telemetry": {
-            "type": "zipkin",
-            "_type": "jaeger",
+            "_type": "zipkin",
+            "__type": "jaeger",
 
-            "__type": "appInsight",
-            "__instrumentation_key": "..."
+            "type": "appInsight",
+            "instrumentation_key": "0a124b9a-9a44-4402-8794-754db0e07eea"
         }
     }
 }
