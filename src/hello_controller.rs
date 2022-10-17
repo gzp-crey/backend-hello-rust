@@ -1,7 +1,7 @@
-use anyhow::Error as AnyError;
-use axum::{routing::get, Extension, Router, Json};
-use std::sync::Arc;
 use crate::config::Config;
+use anyhow::Error as AnyError;
+use axum::{routing::get, Extension, Json, Router};
+use std::sync::Arc;
 
 struct State {
     config: Config,
@@ -16,14 +16,12 @@ pub struct Service {
     config: Config,
 }
 
-impl Service {   
+impl Service {
     pub fn into_router(self) -> Router {
         let mut router = Router::new();
         router = router.route("/config", get(get_configuration));
 
-        let state = State {
-            config: self.config.clone(),
-        };
+        let state = State { config: self.config };
         let state = Arc::new(state);
         router = router.layer(Extension(state));
 

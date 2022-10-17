@@ -177,20 +177,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "azure_svc_keyvault"
-version = "0.6.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3527823d9200f539a03628317c19de302b9d4b88c2d9d76fe154428374c93db8"
-dependencies = [
- "azure_core",
- "bytes",
- "futures",
- "serde",
- "serde_json",
- "time",
-]
-
-[[package]]
 name = "base64"
 version = "0.13.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -697,9 +683,9 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "axum",
+ "azure_core",
  "azure_identity",
  "azure_security_keyvault",
- "azure_svc_keyvault",
  "config",
  "futures",
  "log",
@@ -708,6 +694,7 @@ dependencies = [
  "opentelemetry-zipkin",
  "serde",
  "serde_json",
+ "thiserror",
  "tokio",
  "tower",
  "tower-http",

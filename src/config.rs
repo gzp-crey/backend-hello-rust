@@ -1,11 +1,11 @@
 use crate::tracing_controller;
-use anyhow::{anyhow, Error as AnyError};
 use azure_identity::AzureCliCredential;
 use azure_security_keyvault::SecretClient;
 use config as cfg;
 use futures::StreamExt;
 use serde::{Deserialize, Serialize};
 use std::{path::Path, sync::Arc};
+use thiserror::Error as ThisError;
 use tokio::runtime::Handle as RtHandle;
 
 pub const SERVICE_NAME: &str = "hello-world";
@@ -25,7 +25,7 @@ struct PreinitConfig {
 }
 
 impl PreinitConfig {
-    fn new() -> Result<PreinitConfig, AnyError> {
+    fn new() -> Result<PreinitConfig, cfg::ConfigError> {
         use config::{Environment, File};
         let config_file = "web_config.json";
 
@@ -41,9 +41,24 @@ impl PreinitConfig {
     }
 }
 
+#[derive(Debug, ThisError)]
+pub enum AzureKeyvaultConfigError {
+    #[error("Azure core error: {0}")]
+    Azure(#[source] azure_core::Error),
+    #[error("Preinit configuration is not mathcing to the final configuration")]
+    PreinitMissMatch,
+}
+
+impl From<AzureKeyvaultConfigError> for cfg::ConfigError {
+    fn from(err: AzureKeyvaultConfigError) -> Self {
+        cfg::ConfigError::Foreign(Box::new(err))
+    }
+}
+
 #[derive(Clone, Debug)]
 pub struct AzureKeyvaultConfigSource {
     rt_handle: RtHandle,
+    keyvault_url: String,
     client: SecretClient,
 }
 
@@ -52,10 +67,12 @@ impl AzureKeyvaultConfigSource {
         rt_handle: &RtHandle,
         azure_credentials: &Arc<AzureCliCredential>,
         keyvault_url: &str,
-    ) -> Result<AzureKeyvaultConfigSource, AnyError> {
-        let client = SecretClient::new(keyvault_url, azure_credentials.clone())?;
+    ) -> Result<AzureKeyvaultConfigSource, cfg::ConfigError> {
+        let client =
+            SecretClient::new(keyvault_url, azure_credentials.clone()).map_err(AzureKeyvaultConfigError::Azure)?;
         Ok(Self {
             rt_handle: rt_handle.clone(),
+            keyvault_url: keyvault_url.to_owned(),
             client,
         })
     }
@@ -71,11 +88,12 @@ impl cfg::Source for AzureKeyvaultConfigSource {
             self.rt_handle.block_on(async {
                 let mut config = cfg::Map::new();
 
+                log::info!("Loading secrets from {} ...", self.keyvault_url);
                 let mut stream = self.client.list_secrets().into_stream();
                 while let Some(response) = stream.next().await {
-                    let response = response.map_err(|err| cfg::ConfigError::Foreign(Box::new(err)))?;
+                    let response = response.map_err(AzureKeyvaultConfigError::Azure)?;
                     for raw in &response.value {
-                        let key = raw.id.split("/").last();
+                        let key = raw.id.split('/').last();
                         if let Some(key) = key {
                             log::info!("Reading secret {:?}", key);
                             let secret = self
@@ -83,7 +101,7 @@ impl cfg::Source for AzureKeyvaultConfigSource {
                                 .get(key)
                                 .into_future()
                                 .await
-                                .map_err(|err| cfg::ConfigError::Foreign(Box::new(err)))?;
+                                .map_err(AzureKeyvaultConfigError::Azure)?;
                             if secret.attributes.enabled {
                                 config.insert(key.to_owned(), secret.value.into());
                             }
@@ -91,7 +109,7 @@ impl cfg::Source for AzureKeyvaultConfigSource {
                     }
                 }
 
-                //log::info!("{:#?}", config);
+                //log::warn!("{:#?}", config);
                 Ok(config)
             })
         })
@@ -108,21 +126,23 @@ pub struct Config {
 }
 
 impl Config {
-    pub fn new(rt_handle: &RtHandle, azure_credentials: &Arc<AzureCliCredential>) -> Result<Config, AnyError> {
+    pub fn new(rt_handle: &RtHandle, azure_credentials: &Arc<AzureCliCredential>) -> Result<Config, cfg::ConfigError> {
         let preinit = PreinitConfig::new()?;
 
+        log::info!("Checking shared keyvault...");
         let shared_keyvault = preinit
             .core
             .shared_keyvault
             .as_ref()
-            .map(|uri| AzureKeyvaultConfigSource::new(rt_handle, azure_credentials, &uri))
+            .map(|uri| AzureKeyvaultConfigSource::new(rt_handle, azure_credentials, uri))
             .transpose()?;
 
+        log::info!("Checking private keyvault...");
         let private_keyvault = preinit
             .core
             .private_keyvault
             .as_ref()
-            .map(|uri| AzureKeyvaultConfigSource::new(rt_handle, azure_credentials, &uri))
+            .map(|uri| AzureKeyvaultConfigSource::new(rt_handle, azure_credentials, uri))
             .transpose()?;
 
         let config_file = "web_config.json";
@@ -142,11 +162,7 @@ impl Config {
         let cfg: Config = s.try_deserialize()?;
 
         if preinit.core != cfg.core {
-            return Err(anyhow!(
-                "Preinit and configuration are not matching: {:#?}, {:#?}",
-                preinit.core,
-                cfg.core
-            ));
+            return Err(AzureKeyvaultConfigError::PreinitMissMatch.into());
         }
 
         log::info!("configuration: {:#?}", cfg);

@@ -14,8 +14,8 @@ use tower_http::{
 use tracing::{log, Dispatch, Level};
 
 mod config;
-mod tracing_controller;
 mod hello_controller;
+mod tracing_controller;
 
 async fn shutdown_signal() {
     signal::ctrl_c().await.expect("expect tokio signal ctrl-c");
@@ -23,6 +23,7 @@ async fn shutdown_signal() {
 }
 
 async fn async_main(rt_handle: RtHandle) -> Result<(), AnyError> {
+    log::warn!("Finding azure credentials...");
     let credential = Arc::new(AzureCliCredential::new());
 
     let (config, tracing_service) = {
@@ -71,7 +72,7 @@ async fn async_main(rt_handle: RtHandle) -> Result<(), AnyError> {
         .layer(cors)
         .layer(tracing_layer);
 
-    let addr = SocketAddr::from(([0, 0, 0, 0], 8080));
+    let addr = SocketAddr::from(([0, 0, 0, 0], 80));
     log::warn!("Starting service on {}", addr);
 
     axum::Server::bind(&addr)
@@ -85,8 +86,23 @@ async fn async_main(rt_handle: RtHandle) -> Result<(), AnyError> {
     Ok(())
 }
 
-pub fn main() -> Result<(), AnyError> {
-    let rt = Runtime::new()?;
+pub fn main() {
+    let rt = Runtime::new().unwrap();
+
     let handle = rt.handle();
-    handle.block_on(async_main(handle.clone()))
+    if let Err(err) = handle.block_on(async_main(handle.clone())) {
+        println!("[ERROR] {}", err);
+        if let Some(cause) = err.source() {
+            println!();
+            println!("Caused by:");
+            let mut cause = Some(cause);
+            let mut i = 0;
+            while let Some(e) = cause {
+                println!("   {}: {}", i, e);
+                cause = e.source();
+                i += 1;
+            }
+        }
+        panic!();
+    }
 }
