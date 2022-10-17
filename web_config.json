@@ -1,0 +1,17 @@
+{
+    "core": {
+        "slot": "test",
+        "stage": "gzp123",
+        "_shared_keyvault": "https://creybankgzp001.vault.azure.net/",
+        "private_keyvault": "https://creybankgzp001.vault.azure.net/"
+    },
+
+    "tracing": {
+        "allow_reconfigure": "true",
+
+        "telemetry": {
+            "_type": "zipkin",
+            "type": "jaeger"
+        }
+    }
+}

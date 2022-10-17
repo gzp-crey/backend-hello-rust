@@ -1,0 +1,32 @@
+[package]
+name = "hello"
+version = "0.1.0"
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+log = "0.4"
+tracing = "0.1"
+tracing-log = "0.1"
+opentelemetry = { version = "0.18", features = ["rt-tokio"] }
+opentelemetry-jaeger = { version = "0.17", features = ["rt-tokio"] }
+opentelemetry-zipkin = { version ="0.16", features = ["reqwest-client"], default-features = false }
+tracing-opentelemetry = "0.18"
+tracing-subscriber = {version = "0.3", features = ["env-filter"] }
+
+anyhow = "1.0"
+config = "0.13"
+
+futures = "0.3"
+tokio = { version = "1.21", features = ["rt-multi-thread", "macros", "signal"] }
+axum = "0.5"
+tower = "0.4"
+tower-http = { version = "0.3", features = ["fs", "trace", "cors"] }
+
+azure_identity = "0.6"
+azure_svc_keyvault = "0.6"
+azure_security_keyvault = "0.5"
+
+serde = "1.0"
+serde_json = "1.0"
