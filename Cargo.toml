@@ -10,6 +10,7 @@ log = "0.4"
 tracing = "0.1"
 tracing-log = "0.1"
 opentelemetry = { version = "0.18", features = ["rt-tokio"] }
+opentelemetry-semantic-conventions = "0.10"
 opentelemetry-jaeger = { version = "0.17", features = ["rt-tokio"] }
 opentelemetry-zipkin = { version ="0.16", features = ["reqwest-client"], default-features = false }
 opentelemetry-application-insights= { version ="0.22" }

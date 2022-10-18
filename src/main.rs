@@ -7,7 +7,7 @@ use tokio::{
     runtime::{Handle as RtHandle, Runtime},
     signal,
 };
-use tower_http::{cors::CorsLayer};
+use tower_http::cors::CorsLayer;
 use tracing::{log, Dispatch};
 
 mod config;

@@ -735,6 +735,7 @@ dependencies = [
  "opentelemetry",
  "opentelemetry-application-insights",
  "opentelemetry-jaeger",
+ "opentelemetry-semantic-conventions",
  "opentelemetry-zipkin",
  "reqwest",
  "serde",

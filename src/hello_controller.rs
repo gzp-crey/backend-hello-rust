@@ -9,6 +9,7 @@ struct State {
 
 #[tracing::instrument(skip(state))]
 async fn get_configuration(Extension(state): Extension<Arc<State>>) -> Json<Config> {
+    log::trace!("hi trace");
     Json(state.config.clone())
 }
 

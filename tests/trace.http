@@ -1,0 +1,10 @@
+@url = http://local.playcrey.com:80
+
+
+PUT {{url}}/tracing/config
+Content-Type: application/json
+
+{
+    "filter": "trace" 
+}
+###

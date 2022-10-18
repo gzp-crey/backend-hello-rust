@@ -1,9 +1,16 @@
 use crate::config::SERVICE_NAME;
 use anyhow::Error as AnyError;
-use axum::{routing::put, Extension, Router};
+use axum::{routing::put, Extension, Router, Json};
+use opentelemetry::{
+    runtime::Tokio as OTTokio,
+    sdk::{trace as otsdk, Resource},
+    trace::Tracer,
+};
+use opentelemetry_semantic_conventions::resource as otconv;
 use serde::{Deserialize, Serialize};
 use std::{fmt, sync::Arc};
 use tracing::{instrument::WithSubscriber, log, Dispatch, Level, Subscriber};
+use tracing_opentelemetry::PreSampledTracer;
 use tracing_subscriber::{
     filter::EnvFilter,
     layer::SubscriberExt,
@@ -19,6 +26,9 @@ pub enum Telemetry {
     /// Disable telemetry
     None,
 
+    /// Dump trace to the standard output
+    StdOut,
+
     /// Enable Jaeger telemetry (https://www.jaegertracing.io)
     Jaeger,
 
@@ -26,10 +36,7 @@ pub enum Telemetry {
     Zipkin,
 
     /// Appinsight telemetry
-    AppInsight {
-        //endpoint: String,
-        instrumentation_key: String,
-    },
+    AppInsight { instrumentation_key: String },
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -54,11 +61,16 @@ where
     }
 }
 
+#[derive(Debug, Serialize, Deserialize)]
+pub struct TraceConfigRequest {
+    filter: String,
+}
+
 #[tracing::instrument(skip(state))]
-async fn configure_log(Extension(state): Extension<Arc<State>>, format: String) -> Result<(), String> {
-    log::trace!("format={}", format);
+async fn reconfigure(Extension(state): Extension<Arc<State>>, Json(format): Json<TraceConfigRequest>) -> Result<(), String> {
+    log::trace!("config: {:#?}", format);
     if let Some(reload_handle) = &state.reload_handle {
-        reload_handle.reconfigure(format)
+        reload_handle.reconfigure(format.filter)
     } else {
         Err("Trace reconfigure is not enabled".into())
     }
@@ -79,75 +91,98 @@ pub struct Service {
 }
 
 impl Service {
-    fn finalize_logger<L>(&mut self, _config: &Config, log: L) -> Result<(), AnyError>
+    fn set_global_logger<L>(&mut self, tracing_pipeline: L) -> Result<(), AnyError>
     where
         L: Into<Dispatch>,
     {
-        tracing::dispatcher::set_global_default(log.into())?;
+        tracing::dispatcher::set_global_default(tracing_pipeline.into())?;
         Ok(())
     }
 
-    fn intsall_telemetry<L>(&mut self, config: &Config, log: L) -> Result<(), AnyError>
+    fn intsall_telemetry_with_tracer<L, T>(
+        &mut self,
+        _config: &Config,
+        tracing_pipeline: L,
+        tracer: T,
+    ) -> Result<(), AnyError>
+    where
+        L: for<'a> LookupSpan<'a> + Subscriber + WithSubscriber + Send + Sync,
+        T: 'static + Tracer + PreSampledTracer + Send + Sync,
+    {
+        let telemetry = tracing_opentelemetry::layer()
+            .with_tracked_inactivity(true)
+            .with_tracer(tracer);
+        let tracing_pipeline = tracing_pipeline.with(telemetry);
+        self.set_global_logger(tracing_pipeline)?;
+        Ok(())
+    }
+
+    fn intsall_telemetry<L>(&mut self, config: &Config, tracing_pipeline: L) -> Result<(), AnyError>
     where
         L: for<'a> LookupSpan<'a> + Subscriber + WithSubscriber + Send + Sync,
     {
+        let resource = Resource::new(vec![otconv::SERVICE_NAME.string(SERVICE_NAME)]);
+
         match &config.telemetry {
+            Telemetry::StdOut => {
+                let tracer = opentelemetry::sdk::export::trace::stdout::PipelineBuilder::default()
+                    .with_trace_config(
+                        otsdk::config()
+                            .with_resource(resource)
+                            .with_sampler(otsdk::Sampler::AlwaysOn),
+                    )
+                    .install_simple();
+                self.intsall_telemetry_with_tracer(config, tracing_pipeline, tracer)
+            }
             Telemetry::Jaeger => {
                 let tracer = opentelemetry_jaeger::new_agent_pipeline()
+                    .with_trace_config(otsdk::config().with_resource(resource))
                     .with_service_name(SERVICE_NAME)
-                    .install_batch(opentelemetry::runtime::Tokio)?;
-                let telemetry = tracing_opentelemetry::layer()
-                    .with_tracked_inactivity(true)
-                    .with_tracer(tracer);
-                self.finalize_logger(config, log.with(telemetry))
+                    .install_batch(OTTokio)?;
+                self.intsall_telemetry_with_tracer(config, tracing_pipeline, tracer)
             }
             Telemetry::Zipkin => {
                 let tracer = opentelemetry_zipkin::new_pipeline()
+                    .with_trace_config(otsdk::config().with_resource(resource))
                     .with_service_name(SERVICE_NAME)
-                    .install_batch(opentelemetry::runtime::Tokio)?;
-                let telemetry = tracing_opentelemetry::layer()
-                    .with_tracked_inactivity(true)
-                    .with_tracer(tracer);
-                self.finalize_logger(config, log.with(telemetry))
+                    .install_batch(OTTokio)?;
+                self.intsall_telemetry_with_tracer(config, tracing_pipeline, tracer)
             }
 
-            Telemetry::AppInsight {
-                /*endpoint,*/ instrumentation_key,
-            } => {
+            Telemetry::AppInsight { instrumentation_key } => {
                 let tracer = opentelemetry_application_insights::new_pipeline(instrumentation_key.clone())
-                    //.with_endpoint(endpoint).unwrap()
+                    .with_trace_config(otsdk::config().with_resource(resource))
                     .with_service_name(SERVICE_NAME)
                     .with_client(reqwest::Client::new())
-                    .install_batch(opentelemetry::runtime::Tokio);
-                let telemetry = tracing_opentelemetry::layer()
-                    .with_tracked_inactivity(true)
-                    .with_tracer(tracer);
-                self.finalize_logger(config, log.with(telemetry))
+                    .install_batch(OTTokio);
+                self.intsall_telemetry_with_tracer(config, tracing_pipeline, tracer)
             }
             Telemetry::None => Ok(()), //self.finalize_logger(config, log),
         }
     }
 
-    fn install_logger<L>(&mut self, config: &Config, log: L) -> Result<(), AnyError>
+    fn install_logger<L>(&mut self, config: &Config, tracing_pipeline: L) -> Result<(), AnyError>
     where
         L: for<'a> LookupSpan<'a> + Subscriber + WithSubscriber + Send + Sync,
     {
         let fmt = tracing_subscriber::fmt::Layer::new();
 
-        if config.allow_reconfigure {
+        let env_filter = if config.allow_reconfigure {
             let env_filter = EnvFilter::from_default_env().add_directive(Level::WARN.into());
             let (env_filter, reload_handle) = reload::Layer::new(env_filter);
             self.reload_handle = Some(Box::new(reload_handle));
-            self.intsall_telemetry(config, log.with(fmt).with(env_filter))
+            Some(env_filter)
         } else {
-            self.intsall_telemetry(config, log.with(fmt))
-        }
+            None
+        };
+
+        self.intsall_telemetry(config, tracing_pipeline.with(env_filter).with(fmt))
     }
 
     pub fn into_router(self) -> Router {
         let mut router = Router::new();
         // todo: consider adding it conditionally 'if self.reload_handle.is_some()'
-        router = router.route("/filter", put(configure_log));
+        router = router.route("/config", put(reconfigure));
 
         let state = State {
             reload_handle: self.reload_handle,
