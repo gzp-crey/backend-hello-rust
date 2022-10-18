@@ -1,6 +1,6 @@
 use crate::config::SERVICE_NAME;
 use anyhow::Error as AnyError;
-use axum::{routing::put, Extension, Router, Json};
+use axum::{routing::put, Extension, Json, Router};
 use opentelemetry::{
     runtime::Tokio as OTTokio,
     sdk::{trace as otsdk, Resource},
@@ -66,8 +66,10 @@ pub struct TraceConfigRequest {
     filter: String,
 }
 
-#[tracing::instrument(skip(state))]
-async fn reconfigure(Extension(state): Extension<Arc<State>>, Json(format): Json<TraceConfigRequest>) -> Result<(), String> {
+async fn reconfigure(
+    Extension(state): Extension<Arc<State>>,
+    Json(format): Json<TraceConfigRequest>,
+) -> Result<(), String> {
     log::trace!("config: {:#?}", format);
     if let Some(reload_handle) = &state.reload_handle {
         reload_handle.reconfigure(format.filter)
@@ -165,18 +167,27 @@ impl Service {
     where
         L: for<'a> LookupSpan<'a> + Subscriber + WithSubscriber + Send + Sync,
     {
-        let fmt = tracing_subscriber::fmt::Layer::new();
-
-        let env_filter = if config.allow_reconfigure {
-            let env_filter = EnvFilter::from_default_env().add_directive(Level::WARN.into());
+        if config.allow_reconfigure {
+            let env_filter = EnvFilter::from_default_env().add_directive(Level::INFO.into());
             let (env_filter, reload_handle) = reload::Layer::new(env_filter);
             self.reload_handle = Some(Box::new(reload_handle));
-            Some(env_filter)
-        } else {
-            None
-        };
+            let tracing_pipeline = tracing_pipeline.with(env_filter);
 
-        self.intsall_telemetry(config, tracing_pipeline.with(env_filter).with(fmt))
+            let fmt = tracing_subscriber::fmt::Layer::new();
+            let tracing_pipeline = tracing_pipeline.with(fmt);
+
+            self.intsall_telemetry(config, tracing_pipeline)?;
+        } else {
+            let env_filter = EnvFilter::from_default_env().add_directive(Level::INFO.into());
+            let tracing_pipeline = tracing_pipeline.with(env_filter);
+
+            let fmt = tracing_subscriber::fmt::Layer::new();
+            let tracing_pipeline = tracing_pipeline.with(fmt);
+
+            self.intsall_telemetry(config, tracing_pipeline)?;
+        }
+
+        Ok(())
     }
 
     pub fn into_router(self) -> Router {

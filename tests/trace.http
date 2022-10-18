@@ -5,6 +5,6 @@ PUT {{url}}/tracing/config
 Content-Type: application/json
 
 {
-    "filter": "trace" 
+    "filter": "info" 
 }
 ###
